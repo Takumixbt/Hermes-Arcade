@@ -565,6 +565,19 @@ class KartGame(Game):
             return "Up/Down lane  -  Right accelerate  -  Left brake  -  Space starts"
         return "Up/Down lane  -  Right accelerate  -  Left brake  -  Esc returns to Hermes"
 
+    def text_hud(self) -> str:
+        """Readable state for the half-block fallback, where the pixel HUD is mush."""
+        st = self.state
+        bits = [f"{st.distance:.0f} m", f"{self._ordinal(st.rank)} of 4",
+                f"{int(self.player.speed * 0.36)} km/h"]
+        if st.boost_timer > 0:
+            bits.append("BOOST")
+        elif st.oil_timer > 0:
+            bits.append("OIL")
+        if st.phase == "finished":
+            bits.append("space to race again")
+        return "  |  ".join(bits)
+
 
 def _empty_sheet():
     from ...gfx.canvas import SpriteSheet

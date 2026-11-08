@@ -60,6 +60,10 @@ class Game:
         """One line of help shown under the picture."""
         return ""
 
+    def text_hud(self) -> str:
+        """One line of game state, for renderers that cannot draw the pixel HUD."""
+        return ""
+
     def pause(self, now_ms: float) -> None:
         """Console is being left. Chrome stops the game when its tab loses focus."""
 

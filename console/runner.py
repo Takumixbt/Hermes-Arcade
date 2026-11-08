@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from .games.base import Frame, Game
 from .gfx.sixel import SixelEncoder
+from .gfx.textmode import TextScreen
 from .state import ACTIVITY
 from .terminal import SYNC_BEGIN, SYNC_END, Terminal, TerminalError
 
@@ -116,10 +117,62 @@ def _unsupported(term: Terminal) -> str:
     return "This terminal does not support sixel graphics."
 
 
+def _play_text(game: Game, term: Terminal) -> str:
+    """The no-sixel path: half-block rendering at about 14 fps.
+
+    VS Code and Cursor run xterm.js, which cannot draw sixel. Half blocks with
+    truecolor SGR work there, at lower resolution and framerate.
+    """
+    size = term.size()
+    screen = TextScreen(*size)
+    term.write(b"\x1b[0m\x1b[2J\x1b[H")
+    game.resume(now_ms())
+    last_text: tuple[str, str] | None = None
+    last_render = 0.0
+    try:
+        while True:
+            t = now_ms()
+            leaving = False
+            for key, pressed in term.poll_keys(t / 1000.0):
+                if key == "esc" and pressed:
+                    leaving = True
+                    break
+                game.handle_key(key, pressed, t)
+            if leaving:
+                break
+            game.tick(t)
+            if t - last_render >= 70.0:
+                last_render = t
+                new_size = term.size()
+                if new_size != size:
+                    size = new_size
+                    screen = TextScreen(*size)
+                    term.write(b"\x1b[2J")
+                    last_text = None
+                chunk = screen.paint(game.frame(t))
+                hint, status = _status_text(game)
+                hud = game.text_hud()
+                if hud:
+                    status = f"{hud}   {status}".strip()
+                text = (hint.replace("\n", " "), status)
+                cols, rows = size
+                tail = (f"\x1b[{max(1, rows - 1)};1H\x1b[0m\x1b[K{text[0]}"
+                        f"\x1b[{max(1, rows)};1H\x1b[K{text[1]}")
+                if chunk or text != last_text:
+                    last_text = text
+                    term.write(chunk + tail.encode("utf-8"))
+            time.sleep(0.004)
+    finally:
+        term.write(b"\x1b[0m")
+    return "Left Console."
+
+
 def _play(game: Game, term: Terminal) -> str:
     caps = term.caps
     if not caps.sixel:
-        return _unsupported(term)
+        # xterm.js (VS Code, Cursor) cannot draw sixel at all. Half-blocks work
+        # everywhere and keep the arcade playable; sixel stays the better path.
+        return _play_text(game, term)
 
     encoder = SixelEncoder()
     debug = bool(os.environ.get("CONSOLE_DEBUG"))

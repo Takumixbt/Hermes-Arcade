@@ -76,8 +76,10 @@ The opponent menu lists what this machine actually has:
   provider you configured, through Hermes.
 - Model-written kart controllers execute as Python in a child process. That is
   arbitrary code by design; run `/race` only with models you would let run code.
-- Games are drawn with sixel graphics. Windows Terminal 1.22+, WezTerm, iTerm2
-  and foot work; set `CONSOLE_SIXEL=1` to force it.
+- Games draw with sixel graphics when the terminal supports it (Windows Terminal
+  1.22+, WezTerm, iTerm2, foot). Everywhere else — VS Code, Cursor, any xterm.js
+  panel — the arcade falls back to ANSI truecolor half-blocks at lower
+  resolution, so it still plays. `CONSOLE_SIXEL=1` forces sixel, `0` forces text.
 - High scores and game state stay in the plugin's own data directory.
 
 ## Layout
