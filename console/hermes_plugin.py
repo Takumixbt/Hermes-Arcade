@@ -30,7 +30,7 @@ CLI_ONLY = (
     "Open Hermes in Windows Terminal (or another sixel terminal) and type /console."
 )
 HELP = (
-    "Console games: {games}. Usage: /console [game]  (default: {default}). "
+    "Console games: {games}. Usage: /console [game|probe]  (default: {default}). "
     "Hotkey: {hotkey} opens it any time, even while Hermes is working. Esc returns to Hermes."
 )
 DEFAULT_HOTKEY = "c-o"
@@ -103,6 +103,30 @@ def parse_args(raw_args) -> str:
     return first or DEFAULT_GAME
 
 
+def _probe_report() -> str:
+    """What the plugin thinks the terminal can do, and the evidence for it."""
+    from .terminal import Terminal
+
+    try:
+        with Terminal() as t:
+            caps = t.caps
+            cols, rows = t.size()
+    except Exception as exc:  # a probe must never take the chat down
+        return f"Console probe failed: {type(exc).__name__}: {exc}"
+    env = os.environ
+    raw = caps.raw.encode("latin-1", "ignore").hex() or "(none)"
+    lines = [
+        f"sixel: {'YES' if caps.sixel else 'no'}   (decided by: {caps.source})",
+        f"terminal: {cols}x{rows} chars, cell {caps.cell_w}x{caps.cell_h} px",
+        f"TERM={env.get('TERM', '')}  TERM_PROGRAM={env.get('TERM_PROGRAM', '')}",
+        f"WT_SESSION={env.get('WT_SESSION', '(unset)')[:12]}  "
+        f"CONSOLE_SIXEL={env.get('CONSOLE_SIXEL', '')}",
+        f"DA1 reply: {raw}",
+        "force sixel: CONSOLE_SIXEL=1   force text: CONSOLE_SIXEL=0",
+    ]
+    return "\n".join(lines)
+
+
 def handle_console(raw_args: str = "", *_args, **_kwargs) -> str:
     """Slash-command handler for ``/console``."""
     from .catalog import GAMES
@@ -111,6 +135,12 @@ def handle_console(raw_args: str = "", *_args, **_kwargs) -> str:
     name = parse_args(raw_args)
     if name in {"help", "-h", "--help", "?"}:
         return HELP.format(games=", ".join(sorted(GAMES)), default=DEFAULT_GAME, hotkey=_pretty_key(_hotkey()))
+    if name in {"probe", "caps"}:
+        if os.environ.get("HERMES_GATEWAY"):
+            return CLI_ONLY
+        if _prompt_toolkit_app() is None and not (sys.stdin and sys.stdin.isatty()):
+            return CLI_ONLY
+        return _run_with_terminal_handoff(_probe_report) or "probe finished."
     if name not in GAMES:
         return f"Unknown game {name!r}. Available: {', '.join(sorted(GAMES))}."
     if os.environ.get("HERMES_GATEWAY"):
@@ -203,7 +233,7 @@ def register(ctx) -> None:
     ACTIVITY.host = "Hermes"
     description = "Hermes Arcade: chess, kart and the dino in this terminal. Esc returns."
     try:
-        ctx.register_command("console", handle_console, description=description, args_hint="[chess|kart|dino]")
+        ctx.register_command("console", handle_console, description=description, args_hint="[chess|kart|dino|probe]")
     except TypeError:
         ctx.register_command("console", handle_console, description=description)
     try:

@@ -32,6 +32,8 @@ class Caps:
     cell_h: int = 20
     cols: int = 80
     rows: int = 24
+    raw: str = ""        # the terminal's own DA1 reply, for /console probe
+    source: str = "none"  # how sixel was decided: da1, env:WT_SESSION, forced, none
 
 
 class TerminalError(RuntimeError):
@@ -359,31 +361,58 @@ class Terminal:
 
     # -- capability probe ---------------------------------------------------
 
+    @staticmethod
+    def _env_sixel_hint() -> str:
+        """Terminals that are known to draw sixel, identified by environment.
+
+        ConPTY does not always deliver the DA1 reply to a plugin, so a terminal
+        that answers nothing can still be a sixel terminal. Windows Terminal
+        1.22+ sets WT_SESSION; WezTerm and iTerm2 answer by TERM_PROGRAM.
+        """
+        env = os.environ
+        if env.get("WT_SESSION"):
+            return "env:WT_SESSION"
+        prog = (env.get("TERM_PROGRAM") or "").lower()
+        if prog in {"wezterm", "iterm.app", "mintty", "windows_terminal"}:
+            return f"env:{prog}"
+        if "sixel" in (env.get("TERM") or "").lower():
+            return "env:TERM"
+        return ""
+
     def _probe(self) -> Caps:
         caps = Caps()
         caps.cols, caps.rows = self.size()
         env = os.environ.get("CONSOLE_SIXEL", "").strip().lower()
+        hint = self._env_sixel_hint()
+        if hint:
+            caps.sixel = True
+            caps.source = hint
         self.write(b"\x1b[c\x1b[16t\x1b[18t")
         reply = ""
-        deadline = time.monotonic() + 0.6
+        deadline = time.monotonic() + 1.2
         while time.monotonic() < deadline:
             reply += self.backend.read_raw_chars()
             if "c" in reply and reply.count("t") >= 2:
                 break
             time.sleep(0.01)
+        caps.raw = reply
         data = reply.encode("latin-1", "ignore")
         # More than one layer may answer DA1 (the console host, then the terminal); any
         # reply that lists attribute 4 means sixel is available.
         for m in _DA1.finditer(data):
             if b"4" in m.group(1).split(b";"):
                 caps.sixel = True
+                if caps.source == "none":
+                    caps.source = "da1"
         m = _CELL.search(data)
         if m:
             caps.cell_h, caps.cell_w = int(m.group(1)), int(m.group(2))
         if env in {"1", "true", "yes", "on"}:
             caps.sixel = True
+            caps.source = "forced"
         elif env in {"0", "false", "no", "off"}:
             caps.sixel = False
+            caps.source = "disabled"
         return caps
 
     # -- keys ---------------------------------------------------------------

@@ -524,6 +524,7 @@ class KartGame(Game):
         self.state.countdown = 0.0
         self.state.phase = "racing"
         steps = int(seconds / DT)
+        errors = 0
         for i in range(steps):
             view = {
                 "distance": self.player.dist / PX_PER_METRE,
@@ -537,6 +538,7 @@ class KartGame(Game):
             try:
                 action = policy(view) or {}
             except Exception:
+                errors += 1
                 action = {}
             lane = int(action.get("lane", 1))
             self._pending_lane = max(0, min(2, lane))
@@ -550,6 +552,7 @@ class KartGame(Game):
             "place": self.state.rank,
             "time_s": round(self.state.elapsed, 2),
             "speed_avg": round(self.player.dist / max(0.001, self.state.elapsed) / PX_PER_METRE, 1),
+            "policy_errors": errors,
         }
 
     def _next_pad(self):

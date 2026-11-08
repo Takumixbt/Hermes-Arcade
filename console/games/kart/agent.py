@@ -98,22 +98,20 @@ def run_policy(source: str, seconds: float = 90.0, seed: int = 7,
     interactive game uses, so the score is the game's own physics.
     """
     root = Path(repo) if repo else _repo_root()
+    # The policy source is written at module level, not wrapped in exec(), so the
+    # child is a plain script: easier to read, and it keeps the plugin's security
+    # scan honest about what runs.
     runner = (
-        "import json, sys\n"
-        f"sys.path.insert(0, {str(root)!r})\n"
-        "from console.games.kart.game import KartGame\n"
+        f"{source}\n"
+        "import json as _json\n"
+        "from console.games.kart.game import KartGame as _KartGame\n"
         "try:\n"
-        "    exec(compile(POLICY, '<policy>', 'exec'), globals())\n"
-        "except Exception as exc:\n"
-        "    print(json.dumps({'error': f'policy did not compile: {type(exc).__name__}: {exc}'}))\n"
-        "    raise SystemExit(0)\n"
-        "if 'act' not in globals():\n"
-        "    print(json.dumps({'error': 'policy did not define act(state)'}))\n"
-        "    raise SystemExit(0)\n"
-        f"result = KartGame().simulate(act, seconds={seconds!r}, seed={seed!r})\n"
-        "print(json.dumps(result))\n"
+        "    _act = act\n"
+        "except NameError:\n"
+        "    print(_json.dumps({'error': 'policy did not define act(state)'}))\n"
+        "else:\n"
+        f"    print(_json.dumps(_KartGame().simulate(_act, seconds={seconds!r}, seed={seed!r})))\n"
     )
-    runner = f"POLICY = {source!r}\n" + runner
     with tempfile.TemporaryDirectory(prefix="kart-policy-") as tmp:
         path = Path(tmp) / "run_policy.py"
         path.write_text(runner, encoding="utf-8")
@@ -173,9 +171,12 @@ def report(result: dict) -> str:
     if result.get("error"):
         return f"Kart policy failed: {result['error']}"
     place = result.get("place", "?")
+    extra = ""
+    if result.get("policy_errors"):
+        extra = f" ({result['policy_errors']} policy errors, so it coasted some of the race)"
     return (
         f"{result.get('model', 'model')} drove {result.get('distance_m', 0):.0f} m "
         f"in {result.get('time_s', 0):.1f}s, finishing {place}, "
         f"average {result.get('speed_avg', 0):.0f} m/s "
-        f"(seed {result.get('seed', 7)})."
+        f"(seed {result.get('seed', 7)}){extra}."
     )
