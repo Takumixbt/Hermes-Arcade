@@ -1,0 +1,227 @@
+"""Hermes Agent plugin: ``/console`` and an any-time hotkey.
+
+``/console [game]`` opens chess (or the dino) inside the terminal Hermes is
+running in. Hermes is the one host that can hand the terminal over in place:
+Hermes runs plugin slash commands on a worker thread while prompt_toolkit owns
+the screen and the keyboard on the main thread, so the game is started through
+prompt_toolkit's own ``run_in_terminal``: it pauses Hermes' UI, hands over the
+terminal, and repaints Hermes afterwards.
+
+Hermes only dispatches a slash command once the agent is idle, so while it is
+busy ``/console`` would wait in the queue. The hotkey (Ctrl+O by default, set
+``CONSOLE_HOTKEY`` to change it) is bound straight into prompt_toolkit and opens
+the game immediately, even in the middle of a long run. While you play, agent
+output is held back and shown when you leave.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+import threading
+import time
+
+from .catalog import DEFAULT_GAME
+from .state import ACTIVITY
+
+CLI_ONLY = (
+    "Console draws in the terminal, so it only works in Hermes' command line. "
+    "Open Hermes in Windows Terminal (or another sixel terminal) and type /console."
+)
+HELP = (
+    "Console games: {games}. Usage: /console [game]  (default: {default}). "
+    "Hotkey: {hotkey} opens it any time, even while Hermes is working. Esc returns to Hermes."
+)
+DEFAULT_HOTKEY = "c-o"
+
+_playing = threading.Lock()
+
+
+def _hotkey() -> str:
+    return (os.environ.get("CONSOLE_HOTKEY") or DEFAULT_HOTKEY).strip().lower()
+
+
+def _pretty_key(key: str) -> str:
+    return "Ctrl+" + key[2:].upper() if key.startswith("c-") else key
+
+
+def _prompt_toolkit_app():
+    try:
+        from prompt_toolkit.application import get_app_or_none
+
+        app = get_app_or_none()
+    except Exception:
+        return None
+    if app is not None and getattr(app, "_is_running", False):
+        return app
+    return None
+
+
+def _play_game(name: str) -> str:
+    """Run a game to completion on a real terminal. Never raises into Hermes."""
+    from .registry import get_game
+    from .runner import play
+
+    if not _playing.acquire(blocking=False):
+        return "Console is already open."
+    try:
+        return play(get_game(name))
+    except KeyError as exc:
+        return str(exc.args[0])
+    except Exception as exc:  # a game bug must not take Hermes down
+        return f"Console hit an error ({type(exc).__name__}): {exc}"
+    finally:
+        _playing.release()
+
+
+def _run_with_terminal_handoff(func):
+    """Call ``func`` with prompt_toolkit's UI suspended. Returns its result."""
+    app = _prompt_toolkit_app()
+    if app is None:
+        return func()
+    from prompt_toolkit.application import run_in_terminal
+
+    async def _go():
+        return await run_in_terminal(func, in_executor=True)
+
+    loop = app.loop
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is loop:
+        # Already on the UI thread (a key binding): schedule it and return at once.
+        asyncio.ensure_future(_go())
+        return None
+    return asyncio.run_coroutine_threadsafe(_go(), loop).result()
+
+
+def parse_args(raw_args) -> str:
+    text = raw_args if isinstance(raw_args, str) else ""
+    first = text.strip().split()[0].lower().lstrip("/") if text.strip() else ""
+    return first or DEFAULT_GAME
+
+
+def handle_console(raw_args: str = "", *_args, **_kwargs) -> str:
+    """Slash-command handler for ``/console``."""
+    from .catalog import GAMES
+    from . import registry  # noqa: F401  (registers the built-in games)
+
+    name = parse_args(raw_args)
+    if name in {"help", "-h", "--help", "?"}:
+        return HELP.format(games=", ".join(sorted(GAMES)), default=DEFAULT_GAME, hotkey=_pretty_key(_hotkey()))
+    if name not in GAMES:
+        return f"Unknown game {name!r}. Available: {', '.join(sorted(GAMES))}."
+    if os.environ.get("HERMES_GATEWAY"):
+        return CLI_ONLY
+    if _prompt_toolkit_app() is None and not (sys.stdin and sys.stdin.isatty()):
+        return CLI_ONLY
+    return _run_with_terminal_handoff(lambda: _play_game(name)) or "Left Console."
+
+
+def handle_race(raw_args: str = "", *_args, **_kwargs) -> str:
+    """Slash-command handler for ``/race``: a model writes the controller, then races."""
+    from .games.kart import agent
+
+    llm = agent.get_llm()
+    if llm is None:
+        return "Racing a model needs Hermes's model handle (open Arcade from Hermes)."
+    target = (raw_args or "").strip()
+    provider = model = ""
+    if target:
+        if "/" in target:
+            provider, model = target.split("/", 1)
+        else:
+            model = target
+    result = agent.ask_model(llm, provider=provider, model=model)
+    return agent.report(result)
+
+
+# -- hotkey -------------------------------------------------------------------
+
+
+def _install_hotkey(app) -> bool:
+    if getattr(app, "_console_hotkey_installed", False):
+        return True
+    kb = getattr(app, "key_bindings", None)
+    if kb is None or not hasattr(kb, "add"):
+        return False
+    key = _hotkey()
+
+    def _open(event) -> None:
+        if _playing.locked():
+            return
+        _run_with_terminal_handoff(lambda: _play_game(DEFAULT_GAME))
+
+    try:
+        kb.add(key.replace("ctrl+", "c-"), eager=True)(_open)
+    except Exception:
+        return False
+    app._console_hotkey_installed = True
+    return True
+
+
+def _hotkey_watcher() -> None:
+    """Hermes builds its prompt_toolkit app after plugins load; bind once it exists."""
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        app = _prompt_toolkit_app()
+        if app is not None and _install_hotkey(app):
+            return
+        time.sleep(0.5)
+
+
+# -- Hermes activity hooks ------------------------------------------------------
+
+
+def _turn_started(**_kwargs) -> None:
+    ACTIVITY.started()
+
+
+def _turn_finished(**_kwargs) -> None:
+    ACTIVITY.ended(completed=True)
+
+
+def _session_over(**_kwargs) -> None:
+    ACTIVITY.ended(completed=False)
+
+
+def register(ctx) -> None:
+    """Hermes ``register(ctx)`` entry point."""
+    if not hasattr(ctx, "register_command"):
+        raise RuntimeError("Console needs a Hermes build with plugin slash commands (ctx.register_command).")
+    try:
+        from .games.chess import opponents
+        from .games.kart import agent as kart_agent
+
+        opponents.set_llm(ctx.llm)  # lets chess ask the model Hermes is running
+        opponents.set_host("hermes")  # and lists only Hermes' own providers
+        kart_agent.set_llm(ctx.llm)  # and lets /race ask a model for a controller
+    except Exception:
+        pass  # an older Hermes without ctx.llm: chess still works against the engine
+    ACTIVITY.host = "Hermes"
+    description = "Hermes Arcade: chess, kart and the dino in this terminal. Esc returns."
+    try:
+        ctx.register_command("console", handle_console, description=description, args_hint="[chess|kart|dino]")
+    except TypeError:
+        ctx.register_command("console", handle_console, description=description)
+    try:
+        ctx.register_command("race", handle_race,
+                             description="Ask a model to write a kart controller, then race it",
+                             args_hint="[provider/model]")
+    except Exception:
+        pass  # an older Hermes without a second command slot still has /console
+    for hook, fn in (
+        ("pre_llm_call", _turn_started),
+        ("pre_tool_call", _turn_started),
+        ("subagent_start", _turn_started),
+        ("post_llm_call", _turn_finished),
+        ("on_session_end", _session_over),
+        ("on_session_reset", _session_over),
+    ):
+        try:
+            ctx.register_hook(hook, fn)
+        except Exception:
+            pass  # an older Hermes without this hook only loses the status line
+    threading.Thread(target=_hotkey_watcher, name="console-hotkey", daemon=True).start()
