@@ -3,14 +3,14 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "console-chess"
-version = "2.1.0"
-description = "Play chess against your AI coding agent in the terminal. Switch models as you play."
+name = "hermes-arcade"
+version = "3.0.0"
+description = "Hermes Arcade: chess, a kart racer and Chrome's dino inside the Hermes terminal."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Takumi" }]
-keywords = ["chess", "terminal", "tui", "sixel", "claude-code", "codex", "opencode", "hermes", "stockfish", "chrome-dino"]
+keywords = ["chess", "kart", "terminal", "tui", "sixel", "hermes", "stockfish", "chrome-dino", "arcade"]
 classifiers = [
     "Environment :: Console",
     "License :: OSI Approved :: MIT License",
@@ -23,10 +23,10 @@ dependencies = []
 dev = ["pytest>=7.0", "pillow"]
 
 [project.scripts]
-console = "console.cli:main"
+hermes-arcade = "console.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/Takumixbt/Console"
+Homepage = "https://github.com/Takumixbt/Hermes-Arcade"
 
 [tool.setuptools.packages.find]
 include = ["console", "console.*"]
