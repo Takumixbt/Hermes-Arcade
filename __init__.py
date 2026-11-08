@@ -7,6 +7,9 @@ usable without Hermes (``console chess``), and ``console install`` wires the
 same game into Claude Code, Codex and OpenCode.
 """
 
-from .console.hermes_plugin import register
+try:  # imported as a package (Hermes loads the folder as one)
+    from .console.hermes_plugin import register
+except ImportError:  # imported as a top-level module (pytest, a path loader)
+    from console.hermes_plugin import register
 
 __all__ = ["register"]
