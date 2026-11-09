@@ -71,3 +71,48 @@ def test_boost_pad_is_consumed_once():
     assert game.state.boost_timer > 0
     game.step(DT)
     assert game.state.boost_timer <= 1.1
+
+
+def test_coin_is_collected_once_and_scores():
+    game = KartGame()
+    game.state.phase = "racing"
+    game.state.countdown = 0.0
+    coin = game.coins[0]
+    game.player.dist = coin.dist
+    game.player.lane = float(coin.lane)
+    game.state.elapsed = 1.0
+    game.step(DT)
+    assert coin.taken is True
+    assert game.state.score == 40 and game.state.coins == 1
+    game.step(DT)
+    assert game.state.score == 40
+
+
+def test_drift_then_release_grants_a_boost():
+    game = KartGame()
+    game.state.phase = "racing"
+    game.state.countdown = 0.0
+    game.player.speed = 220.0
+    game.handle_key("left", True, 0.0)
+    for _ in range(8):
+        game.step(DT)
+    assert game.state.drift > 0.4
+    game.handle_key("left", False, 0.0)
+    game.step(DT)
+    assert game.state.boost_timer > 0
+
+
+def test_slipstream_detects_a_rival_just_ahead():
+    game = KartGame()
+    game.player.dist = 1000.0
+    rival = game.rivals[0]
+    rival.dist = 1040.0
+    rival.lane = game.player.lane
+    assert game._draft(game.player) is True
+    rival.dist = 1300.0
+    assert game._draft(game.player) is False
+
+
+def test_each_seed_picks_one_stable_theme():
+    assert len({KartGame(seed=i).theme_name for i in range(3)}) == 3
+    assert KartGame(seed=7).theme_name == KartGame(seed=7).theme_name

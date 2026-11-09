@@ -94,7 +94,12 @@ def _models_dev() -> dict:
 
 
 def _candidate_providers(cfg: dict, current_provider: str) -> list[str]:
-    """Providers this install plausibly has credentials for: config entries and live env keys."""
+    """Providers this install is configured for — Hermes-native only.
+
+    Earlier this also scanned models.dev for any provider whose API-key env var
+    happened to be set, which filled the chess menu with services Hermes was never
+    configured to run. The picker now offers exactly what config.yaml declares.
+    """
     slugs: list[str] = []
     if current_provider:
         slugs.append(current_provider)
@@ -108,12 +113,6 @@ def _candidate_providers(cfg: dict, current_provider: str) -> list[str]:
                 slug = entry.get("name") or entry.get("id") or entry.get("slug")
                 if slug:
                     slugs.append(str(slug))
-    cache = _models_dev()
-    for slug, meta in cache.items():
-        env = meta.get("env") if isinstance(meta, dict) else None
-        names = [env] if isinstance(env, str) else list(env or [])
-        if any(os.environ.get(name) for name in names):
-            slugs.append(slug)
     seen, out = set(), []
     for slug in slugs:
         if slug and slug not in seen:

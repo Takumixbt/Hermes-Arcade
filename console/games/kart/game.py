@@ -77,9 +77,43 @@ PALETTE[BOOST] = (250, 208, 60)
 PALETTE[BOOST_DARK] = (196, 150, 28)
 PALETTE[OIL] = (34, 34, 40)
 PALETTE[OIL_EDGE] = (18, 18, 22)
+OIL_HI = 31
+PALETTE[OIL_HI] = (78, 78, 92)
 PALETTE[INK] = (250, 250, 250)
 PALETTE[INK_SOFT] = (176, 176, 176)
 PALETTE[255] = (255, 255, 255)
+
+# Time-of-day variants get their own palette indices, so a frame never mutates the
+# shared palette and two themes can be rendered from one process.
+SKY_DUSK, SKY_DUSK_LOW = 172, 173
+SKY_NITE, SKY_NITE_LOW = 174, 175
+HILL_FAR_DUSK, HILL_NEAR_DUSK = 183, 187
+HILL_FAR_NITE, HILL_NEAR_NITE = 184, 188
+GRASS_DUSK, GRASS_NITE = 96, 97
+PALETTE[SKY_DUSK] = (238, 148, 92)
+PALETTE[SKY_DUSK_LOW] = (252, 198, 132)
+PALETTE[SKY_NITE] = (24, 28, 56)
+PALETTE[SKY_NITE_LOW] = (44, 54, 92)
+PALETTE[HILL_FAR_DUSK] = (178, 138, 148)
+PALETTE[HILL_NEAR_DUSK] = (120, 90, 108)
+PALETTE[HILL_FAR_NITE] = (44, 58, 96)
+PALETTE[HILL_NEAR_NITE] = (30, 42, 72)
+PALETTE[GRASS_DUSK] = (118, 108, 68)
+PALETTE[GRASS_NITE] = (34, 54, 48)
+
+THEMES = {
+    "DAY": {"sky": SKY, "sky_low": SKY_LOW, "hill_far": HILL_FAR,
+            "hill_near": HILL_NEAR, "grass": GRASS},
+    "DUSK": {"sky": SKY_DUSK, "sky_low": SKY_DUSK_LOW, "hill_far": HILL_FAR_DUSK,
+             "hill_near": HILL_NEAR_DUSK, "grass": GRASS_DUSK},
+    "NITE": {"sky": SKY_NITE, "sky_low": SKY_NITE_LOW, "hill_far": HILL_FAR_NITE,
+             "hill_near": HILL_NEAR_NITE, "grass": GRASS_NITE},
+}
+THEME_NAMES = ("DAY", "DUSK", "NITE")
+
+# Checkpoint arches: a visible promise that the race is moving.
+GATES = (500.0, 1000.0, 1500.0)
+COIN_SCORE = 40
 
 
 def _lerp(a: float, b: float, t: float) -> float:
@@ -114,6 +148,13 @@ class Pad:
 
 
 @dataclass
+class Coin:
+    dist: float
+    lane: int
+    taken: bool = False
+
+
+@dataclass
 class RaceState:
     phase: str = "countdown"   # countdown | racing | finished
     countdown: float = 3.2
@@ -124,6 +165,10 @@ class RaceState:
     message: str = ""
     boost_timer: float = 0.0
     oil_timer: float = 0.0
+    score: int = 0
+    coins: int = 0
+    drift: float = 0.0
+    draft: bool = False
 
 
 @register("kart")
@@ -144,6 +189,11 @@ class KartGame(Game):
         ]
         self.state = RaceState()
         self.pads: list[Pad] = []
+        self.coins: list[Coin] = []
+        # One theme per seed keeps benchmarks reproducible while making a played
+        # race feel like a place rather than a template.
+        self.theme_name = THEME_NAMES[seed % len(THEME_NAMES)]
+        self.theme = THEMES[self.theme_name]
         self._build_track()
         self._last_ms: float | None = None
         self._pending_lane = 1
@@ -162,6 +212,15 @@ class KartGame(Game):
         while d < RACE_METRES * PX_PER_METRE - 400:
             self.pads.append(Pad(d, i % 3, "boost" if i % 2 == 0 else "oil"))
             d += step + (i % 3) * 90.0
+            i += 1
+        # Coins sit in lanes the pads do not, so the fast line always costs a
+        # small lane decision rather than being a straight line.
+        self.coins = []
+        d = 260.0
+        i = 0
+        while d < RACE_METRES * PX_PER_METRE - 200:
+            self.coins.append(Coin(d, (i * 2 + 1) % 3))
+            d += 170.0 + (i % 4) * 40.0
             i += 1
 
     # -- input ----------------------------------------------------------
@@ -247,6 +306,11 @@ class KartGame(Game):
 
         self._step_rivals(dt, p)
         self._step_pads(p)
+        self._step_coins(p)
+        self._step_drift(dt)
+        st.draft = self._draft(p)
+        if st.draft:
+            p.speed = min(p.speed + 30.0 * dt, MAX_SPEED + 40.0)
         self._rank()
         if p.dist >= RACE_METRES * PX_PER_METRE and not p.finished:
             p.finished = True
@@ -303,6 +367,39 @@ class KartGame(Game):
         order = sorted([self.player, *self.rivals], key=lambda r: r.dist, reverse=True)
         self.state.rank = order.index(self.player) + 1
 
+    def _step_coins(self, p: Racer) -> None:
+        """A coin is worth a little speed as well as points, so the line matters."""
+        for coin in self.coins:
+            if coin.taken or abs(coin.dist - p.dist) > 16:
+                continue
+            if abs(coin.lane - p.lane) > 0.5:
+                continue
+            coin.taken = True
+            self.state.score += COIN_SCORE
+            self.state.coins += 1
+            self.state.boost_timer = max(self.state.boost_timer, 0.35)
+
+    def _step_drift(self, dt: float) -> None:
+        """Brake hard through a lane change, release for a boost out of the corner."""
+        st = self.state
+        if st.oil_timer > 0:
+            st.drift = 0.0
+            return
+        if self._throttle < 0 and self.player.speed > 140.0:
+            st.drift = min(1.0, st.drift + dt * 4.0)
+        elif self._throttle >= 0 and st.drift > 0.0:
+            if st.drift >= 0.45:
+                st.boost_timer = max(st.boost_timer, 0.8)
+            st.drift = 0.0
+
+    def _draft(self, p: Racer) -> bool:
+        """True when tucked in behind a rival in the same lane."""
+        for r in self.rivals:
+            gap = r.dist - p.dist
+            if 0.0 < gap < 70.0 and abs(r.lane - p.lane) < 0.45:
+                return True
+        return False
+
     @staticmethod
     def _ordinal(n: int) -> str:
         return {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}.get(n, f"{n}th")
@@ -313,6 +410,8 @@ class KartGame(Game):
         c.global_alpha = 1.0
         self._sky(c)
         self._road(c)
+        self._gates(c)
+        self._finish(c)
         self._scenery(c)
         self._pads(c)
         self._racers(c)
@@ -326,8 +425,8 @@ class KartGame(Game):
         c.fill()
 
     def _sky(self, c: Canvas) -> None:
-        self._band(c, 0, 58, SKY)
-        self._band(c, 58, ROAD_TOP - 16, SKY_LOW)
+        self._band(c, 0, 58, self.theme["sky"])
+        self._band(c, 58, ROAD_TOP - 16, self.theme["sky_low"])
         # clouds drift slower than the road
         for i in range(8):
             x = ((i * 113) - (self.state.scroll * 0.06) % 113) - 60
@@ -338,11 +437,60 @@ class KartGame(Game):
         # stepped hills read as landscape, not as boxes
         for i in range(0, 10):
             x = ((i * 104) - (self.state.scroll * 0.18) % 104) - 50
-            self._hill(c, x, ROAD_TOP - 16, 96, 26 + (i * 7) % 17, HILL_FAR)
+            self._hill(c, x, ROAD_TOP - 16, 96, 26 + (i * 7) % 17, self.theme["hill_far"])
         for i in range(0, 14):
             x = ((i * 74) - (self.state.scroll * 0.34) % 74) - 40
-            self._hill(c, x, ROAD_TOP - 16, 64, 16 + (i * 5) % 12, HILL_NEAR)
-        self._band(c, ROAD_TOP - 16, ROAD_TOP, GRASS)
+            self._hill(c, x, ROAD_TOP - 16, 64, 16 + (i * 5) % 12, self.theme["hill_near"])
+        self._band(c, ROAD_TOP - 16, ROAD_TOP, self.theme["grass"])
+        self._hoardings(c)
+
+    def _hoardings(self, c: Canvas) -> None:
+        """Trackside sponsor boards: at 600x150 they read far better than tiny people."""
+        off = (self.state.scroll * 0.9) % 36
+        colours = (PLAYER, RIVAL_A, RIVAL_B, KERB_B, BOOST)
+        x = -off
+        i = 0
+        while x < WIDTH:
+            w = 24 + (i * 7) % 13
+            self._band_rect(c, x, ROAD_TOP - 13, w, 10, OIL_EDGE)
+            self._band_rect(c, x + 1, ROAD_TOP - 12, w - 2, 8, colours[i % len(colours)])
+            self._band_rect(c, x + 4, ROAD_TOP - 9, max(4, w - 8), 2, INK)
+            x += w + 8
+            i += 1
+
+    def _gates(self, c: Canvas) -> None:
+        """A banner every 500 m so progress is visible, not just a number."""
+        p = self.player
+        for metres in GATES:
+            dx = 90.0 + (metres * PX_PER_METRE - p.dist)
+            if dx < -60 or dx > WIDTH + 20:
+                continue
+            top = ROAD_TOP - 24
+            col = BOOST if metres >= RACE_METRES else KERB_B
+            for post in (dx, dx + 46):
+                self._band_rect(c, post, top, 3, ROAD_BOTTOM + 3 - top, OIL_EDGE)
+            self._band_rect(c, dx, top, 49, 13, OIL)
+            self._band_rect(c, dx, top, 49, 2, col)
+            self._band_rect(c, dx, top + 11, 49, 2,
+                            KERB_B if metres < RACE_METRES else BOOST)
+            self._text(c, int(dx) + 7, int(top) + 4, f"{metres:.0f}M", col)
+
+    def _finish(self, c: Canvas) -> None:
+        p = self.player
+        dx = 90.0 + (RACE_METRES * PX_PER_METRE - p.dist)
+        if dx < -14 or dx > WIDTH + 14:
+            return
+        y = ROAD_TOP
+        row = 0
+        while y < ROAD_BOTTOM:
+            x = int(dx)
+            i = 0
+            while x < int(dx) + 12 and x < WIDTH:
+                self._band_rect(c, x, y, 3, 3, KERB_B if (i + row) % 2 == 0 else OIL_EDGE)
+                x += 3
+                i += 1
+            y += 3
+            row += 1
 
     def _hill(self, c: Canvas, x: float, base_y: int, w: int, h: int, colour: int, steps: int = 5) -> None:
         sh = max(1, h // steps)
@@ -353,6 +501,12 @@ class KartGame(Game):
     def _road(self, c: Canvas) -> None:
         self._band(c, ROAD_TOP, ROAD_BOTTOM, ROAD)
         self._band(c, ROAD_BOTTOM, ROAD_BOTTOM + 2, GRASS_DARK)
+        # asphalt wear: a few darker patches so the surface is not flat colour
+        wear = int(self.state.scroll) % 160
+        for i in range(7):
+            px = ((i * 137) - wear) % (WIDTH + 140) - 50
+            py = ROAD_TOP + 4 + (i * 5) % max(1, ROAD_BOTTOM - ROAD_TOP - 8)
+            self._band_rect(c, px, py, 20, 3, ROAD_DARK)
         # lane dividers scroll with the player's speed
         off = int(self.state.scroll) % 40
         for y in (LANES[0] + 8, LANES[1] + 8):
@@ -398,8 +552,21 @@ class KartGame(Game):
                 self._band_rect(c, dx, y, 18, 6, BOOST)
                 self._band_rect(c, dx + 3, y + 2, 12, 2, BOOST_DARK)
             else:
-                self._band_rect(c, dx, y, 16, 5, OIL)
-                self._band_rect(c, dx + 2, y + 1, 12, 3, OIL_EDGE)
+                # a puddle, not a hole: an oval silhouette with a wet sheen
+                self._band_rect(c, dx + 2, y - 1, 12, 2, OIL)
+                self._band_rect(c, dx, y + 1, 16, 3, OIL)
+                self._band_rect(c, dx + 2, y + 4, 12, 1, OIL)
+                self._band_rect(c, dx + 4, y + 1, 8, 1, OIL_HI)
+        for coin in self.coins:
+            if coin.taken:
+                continue
+            dx = 90 + (coin.dist - self.player.dist)
+            if dx < -20 or dx > WIDTH + 20:
+                continue
+            bob = int((self.state.elapsed * 6 + coin.dist) % 3)
+            y = LANES[coin.lane] + 4 - bob
+            self._band_rect(c, dx, y, 4, 6, BOOST)
+            self._band_rect(c, dx + 1, y + 1, 2, 4, BOOST_DARK)
 
     def _racers(self, c: Canvas) -> None:
         drawables = []
@@ -415,7 +582,7 @@ class KartGame(Game):
     def _kart(self, c: Canvas, x: float, y: float, body: int, dark: int) -> None:
         y = y - KART_H // 2
         spin = int(self.state.elapsed * 24) % 2
-        self._band_rect(c, x + 1, y + KART_H - 1, KART_W - 2, 3, OIL_EDGE)  # ground shadow
+        self._band_rect(c, x, y + KART_H - 1, KART_W, 3, OIL_EDGE)         # ground shadow
         self._band_rect(c, x + 4, y + 11, 9, 7, OIL)                       # rear wheel
         self._band_rect(c, x + 22, y + 11, 9, 7, OIL)                      # front wheel
         self._band_rect(c, x + 5, y + 12 + spin, 7, 1, INK_SOFT)           # wheel spin
@@ -428,21 +595,22 @@ class KartGame(Game):
         self._band_rect(c, x - 3, y + 7, 4, 5, dark)                       # nose cone
         self._band_rect(c, x - 1, y + 8, 2, 3, BOOST)                      # headlight
         if body == PLAYER and self._throttle > 0 and self.state.phase == "racing":
-            puff = int(self.state.elapsed * 18) % 4
-            self._band_rect(c, x - 8 - puff, y + 11, 4, 2, INK_SOFT)       # exhaust
-            self._band_rect(c, x - 13 - puff, y + 12, 3, 2, GRASS_DARK)
+            puff = int(self.state.elapsed * 18) % 3
+            self._band_rect(c, x - 7 - puff, y + 11, 3, 1, INK_SOFT)   # exhaust
 
     def _hud(self, c: Canvas) -> None:
         st = self.state
         # dark panels keep the tiny 3x5 type readable against sky and road
         c.global_alpha = 0.72
         self._band_rect(c, 4, 4, 108, 28, OIL)
-        if st.boost_timer > 0 or st.oil_timer > 0:
-            self._band_rect(c, WIDTH - 84, 4, 80, 14, OIL)
+        self._band_rect(c, WIDTH - 62, 4, 58, 14, OIL)
+        if st.boost_timer > 0 or st.oil_timer > 0 or st.draft or st.drift >= 0.45:
+            self._band_rect(c, WIDTH - 62, 20, 58, 12, OIL)
         self._band_rect(c, 4, HEIGHT - 18, 96, 14, OIL)
         c.global_alpha = 1.0
         self._text(c, 8, 8, f"{st.distance:5.0f} m", INK)
-        self._text(c, 8, 18, f"{self._ordinal(st.rank)} of 4", INK_SOFT)
+        self._text(c, 8, 18, f"{self._ordinal(st.rank)} of 4  {st.score}PTS", INK_SOFT)
+        self._text(c, WIDTH - 58, 8, f"{self.theme_name} {st.coins}C", INK_SOFT)
         # speed bar inside the bottom panel
         frac = min(1.0, self.player.speed / (MAX_SPEED + 90))
         self._band_rect(c, 40, HEIGHT - 13, 56, 5, ROAD_DARK)
@@ -450,6 +618,19 @@ class KartGame(Game):
         for tick in (14, 28, 42):
             self._band_rect(c, 40 + tick, HEIGHT - 13, 1, 5, OIL_EDGE)
         self._text(c, 8, HEIGHT - 13, "SPD", INK_SOFT)
+        # minimap: one row per racer, so four dots never collapse into one blob
+        bx, by, bw, bh = WIDTH - 84, HEIGHT - 19, 76, 14
+        self._band_rect(c, bx, by, bw, bh, OIL)
+        self._band_rect(c, bx + 1, by + 1, bw - 2, bh - 2, ROAD_DARK)
+        span = RACE_METRES * PX_PER_METRE
+        self._band_rect(c, bx + 2, by + bh - 3, bw - 4, 1, LINE)  # the track itself
+        for frac in (25, 50, 75):
+            self._band_rect(c, bx + 1 + (bw - 2) * frac // 100, by + 1, 1, bh - 2, OIL)
+        for row, r in enumerate((self.player, *self.rivals)):
+            mx = bx + 3 + int(max(0.0, min(1.0, r.dist / span)) * (bw - 10))
+            self._band_rect(c, mx, by + 2 + row * 3, 3, 2,
+                            INK if r is self.player else r.body)
+        self._band_rect(c, bx + bw - 3, by + 2, 1, bh - 4, KERB_B)
         if st.phase == "countdown":
             msg = "3" if st.countdown > 2.2 else "2" if st.countdown > 1.2 else "1" if st.countdown > 0.2 else "GO"
             self._band_rect(c, WIDTH // 2 - 12, 30, 24, 18, OIL)
@@ -462,9 +643,13 @@ class KartGame(Game):
             self._text(c, WIDTH // 2 - 96, 32, st.message, INK)
             self._text(c, WIDTH // 2 - 62, 44, "space to race again", INK_SOFT)
         if st.oil_timer > 0:
-            self._text(c, WIDTH - 78, 8, "OIL!", KERB_A)
+            self._text(c, WIDTH - 58, 22, "OIL!", KERB_A)
         elif st.boost_timer > 0:
-            self._text(c, WIDTH - 78, 8, "BOOST", BOOST)
+            self._text(c, WIDTH - 58, 22, "BOOST", BOOST)
+        elif st.draft:
+            self._text(c, WIDTH - 58, 22, "SLIP", BOOST)
+        elif st.drift >= 0.45:
+            self._text(c, WIDTH - 58, 22, "DRIFT", KERB_A)
 
     def _band_rect(self, c: Canvas, x: float, y: float, w: float, h: float, colour: int) -> None:
         c.fill_style = f"#{colour:02x}0000"
@@ -572,11 +757,13 @@ class KartGame(Game):
         """Readable state for the half-block fallback, where the pixel HUD is mush."""
         st = self.state
         bits = [f"{st.distance:.0f} m", f"{self._ordinal(st.rank)} of 4",
-                f"{int(self.player.speed * 0.36)} km/h"]
+                f"{int(self.player.speed * 0.36)} km/h", f"{st.score} pts"]
         if st.boost_timer > 0:
             bits.append("BOOST")
         elif st.oil_timer > 0:
             bits.append("OIL")
+        elif st.draft:
+            bits.append("SLIP")
         if st.phase == "finished":
             bits.append("space to race again")
         return "  |  ".join(bits)

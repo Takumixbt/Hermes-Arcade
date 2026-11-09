@@ -66,37 +66,44 @@ def test_help_and_unknown_game():
     assert "Unknown game" in plugin.handle_console("pong")
 
 
-def test_gateway_gets_a_polite_refusal(monkeypatch):
+def test_gateway_opens_a_window(monkeypatch):
     monkeypatch.setenv("HERMES_GATEWAY", "1")
-    assert plugin.handle_console("") == plugin.CLI_ONLY
+    monkeypatch.setattr(plugin, "_spawn_window", lambda name: f"spawned {name}")
+    assert plugin.handle_console("") == "spawned chess"
 
 
-def test_no_terminal_no_game(monkeypatch):
+def test_no_terminal_spawns_a_window(monkeypatch):
     monkeypatch.delenv("HERMES_GATEWAY", raising=False)
     monkeypatch.setattr(plugin, "_prompt_toolkit_app", lambda: None)
-    monkeypatch.setattr(sys, "stdin", None)
-    assert plugin.handle_console("dino") == plugin.CLI_ONLY
+    monkeypatch.setattr(plugin, "_spawn_window", lambda name: f"spawned {name}")
+    assert plugin.handle_console("dino") == "spawned dino"
 
 
 def test_the_command_hands_the_game_to_the_terminal_layer(monkeypatch):
     calls = []
     monkeypatch.delenv("HERMES_GATEWAY", raising=False)
-    monkeypatch.setattr(plugin, "_prompt_toolkit_app", lambda: None)
-
-    class Tty:
-        def isatty(self):
-            return True
-
-    monkeypatch.setattr(sys, "stdin", Tty())
+    monkeypatch.setattr(plugin, "_prompt_toolkit_app", lambda: object())
+    monkeypatch.setattr(plugin, "_run_with_terminal_handoff", lambda fn: fn())
     monkeypatch.setattr(plugin, "_play_game", lambda name: calls.append(name) or "Left Console.")
     assert plugin.handle_console("  /DINO now ") == "Left Console."
     assert calls == ["dino"]
 
 
-def test_only_one_console_at_a_time():
+def test_only_one_console_at_a_time(monkeypatch):
     assert plugin._playing.acquire(blocking=False)
     try:
-        assert plugin._play_game("dino") == "Console is already open."
+        monkeypatch.setattr(plugin, "_focus_window", lambda name: True)
+        assert "brought dino to the front" in plugin._play_game("dino")
+    finally:
+        plugin._playing.release()
+
+
+def test_a_stuck_game_never_locks_the_player_out(monkeypatch):
+    assert plugin._playing.acquire(blocking=False)
+    try:
+        monkeypatch.setattr(plugin, "_focus_window", lambda name: False)
+        monkeypatch.setattr(plugin, "_spawn_window", lambda name: f"spawned {name}")
+        assert plugin._play_game("dino") == "spawned dino"
     finally:
         plugin._playing.release()
 
