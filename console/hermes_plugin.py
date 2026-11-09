@@ -58,13 +58,52 @@ def _prompt_toolkit_app():
     return None
 
 
+def _focus_window(game: str) -> bool:
+    """Bring an already-open game window to the front instead of refusing."""
+    if os.name != "nt":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    found: list[int] = []
+    prefix = f"Console - {game}".lower()
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def _visit(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        if buf.value.strip().lower().startswith(prefix):
+            found.append(hwnd)
+            return False
+        return True
+
+    try:
+        user32.EnumWindows(_visit, 0)
+        if not found:
+            return False
+        user32.ShowWindow(found[0], 9)  # SW_RESTORE
+        user32.SetForegroundWindow(found[0])
+        return True
+    except Exception:
+        return False
+
+
 def _play_game(name: str) -> str:
     """Run a game to completion on a real terminal. Never raises into Hermes."""
     from .registry import get_game
     from .runner import play
 
     if not _playing.acquire(blocking=False):
-        return "Console is already open."
+        if _focus_window(name):
+            return f"Console is already open - brought {name} to the front."
+        # A stuck first attempt must not lock the player out: open a fresh window.
+        return _spawn_window(name)
     try:
         return play(get_game(name))
     except KeyError as exc:
