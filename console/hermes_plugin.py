@@ -221,9 +221,10 @@ def handle_console(raw_args: str = "", *_args, **_kwargs) -> str:
         return _run_with_terminal_handoff(_probe_report) or "probe finished."
     if name not in GAMES:
         return f"Unknown game {name!r}. Available: {', '.join(sorted(GAMES))}."
-    if os.environ.get("HERMES_GATEWAY"):
-        return _spawn_window(name)
-    if _prompt_toolkit_app() is None and not (sys.stdin and sys.stdin.isatty()):
+    if os.environ.get("HERMES_GATEWAY") or _prompt_toolkit_app() is None:
+        # The TUI and the gateway host have no prompt_toolkit terminal to draw on,
+        # even when stdin looks like a tty. Spawning a window is the only path that
+        # puts pixels in front of the player, and it never blocks this process.
         return _spawn_window(name)
     return _run_with_terminal_handoff(lambda: _play_game(name)) or "Left Console."
 
