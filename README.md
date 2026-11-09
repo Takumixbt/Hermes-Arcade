@@ -4,10 +4,13 @@ Three games inside the terminal Hermes already runs in:
 
 - **Chess** against the model Hermes is running, the built-in engine, Stockfish,
   or an installed agent CLI (Claude Code, Codex, OpenCode).
-- **Kart**, a side-view racer with three rivals, boost pads and oil slicks. Race
-  it yourself, or let a model write the controller and score it.
+- **Kart**, a side-view racer with three rivals, boost pads, oil slicks, coins,
+  slipstream, a drift charge, checkpoint gates and three times of day. Race it
+  yourself, or let a model write the controller and score it.
 - **Dino**, Chrome's offline runner wearing the Hermes cap, hidden as an easter
   egg.
+
+![Hermes Arcade: chess, kart and the dino](docs/arcade.gif)
 
 `/console` opens the arcade. `Ctrl+O` opens it any time, even while the agent is
 working. `Esc` returns to Hermes exactly where you left it.
