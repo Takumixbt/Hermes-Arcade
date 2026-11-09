@@ -135,6 +135,37 @@ def _probe_report() -> str:
     return "\n".join(lines)
 
 
+def _spawn_window(game: str) -> str:
+    """Run the game in its own terminal, because the agent host has no screen.
+
+    In Hermes 0.23 a plugin command executes in the agent host, which owns no
+    prompt_toolkit app and often no console at all. Spawning a dedicated window is
+    the only way the player sees pixels, and it needs no setup from them.
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    cmd = [sys.executable, "-m", "console", game]
+    env = dict(os.environ, PYTHONPATH=str(root) + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    wt = shutil.which("wt") or shutil.which("wt.exe")
+    if not wt:
+        candidate = os.path.expanduser(r"~\AppData\Local\Microsoft\WindowsApps\wt.exe")
+        wt = candidate if os.path.exists(candidate) else None
+    try:
+        if wt:
+            subprocess.Popen(
+                [wt, "-w", "0", "nt", "--title", f"Console - {game}", "--"] + cmd,
+                cwd=str(root), env=env, close_fds=True,
+            )
+            return f"Console {game} is opening in a new Windows Terminal tab."
+        subprocess.Popen(cmd, cwd=str(root), env=env, close_fds=True)
+        return f"Console {game} is opening in a new window."
+    except Exception as exc:  # never take the chat down over a failed spawn
+        return f"Could not open Console {game}: {type(exc).__name__}: {exc}"
+
+
 def handle_console(raw_args: str = "", *_args, **_kwargs) -> str:
     """Slash-command handler for ``/console``."""
     from .catalog import GAMES
@@ -152,9 +183,9 @@ def handle_console(raw_args: str = "", *_args, **_kwargs) -> str:
     if name not in GAMES:
         return f"Unknown game {name!r}. Available: {', '.join(sorted(GAMES))}."
     if os.environ.get("HERMES_GATEWAY"):
-        return CLI_ONLY
+        return _spawn_window(name)
     if _prompt_toolkit_app() is None and not (sys.stdin and sys.stdin.isatty()):
-        return CLI_ONLY
+        return _spawn_window(name)
     return _run_with_terminal_handoff(lambda: _play_game(name)) or "Left Console."
 
 

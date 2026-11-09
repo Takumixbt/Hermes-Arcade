@@ -407,6 +407,12 @@ class Terminal:
         m = _CELL.search(data)
         if m:
             caps.cell_h, caps.cell_w = int(m.group(1)), int(m.group(2))
+        # A silent probe on Windows means a native console that swallowed the query
+        # (ConPTY). xterm.js always answers DA1, just without attribute 4, so an
+        # empty reply is the one case where assuming sixel is the better default.
+        if not caps.sixel and not reply and os.name == "nt":
+            caps.sixel = True
+            caps.source = "win:silent-console"
         if env in {"1", "true", "yes", "on"}:
             caps.sixel = True
             caps.source = "forced"
