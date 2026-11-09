@@ -115,7 +115,15 @@ def _probe_report() -> str:
         return f"Console probe failed: {type(exc).__name__}: {exc}"
     env = os.environ
     raw = caps.raw.encode("latin-1", "ignore").hex() or "(none)"
+    import ctypes
+    hwnd = ctypes.windll.kernel32.GetConsoleWindow() if os.name == "nt" else 0
+    cls = "(none)"
+    if hwnd:
+        buf = ctypes.create_unicode_buffer(256)
+        ctypes.windll.user32.GetClassNameW(hwnd, buf, 256)
+        cls = buf.value
     lines = [
+        f"process: pid {os.getpid()}  console-class {cls}",
         f"sixel: {'YES' if caps.sixel else 'no'}   (decided by: {caps.source})",
         f"terminal: {cols}x{rows} chars, cell {caps.cell_w}x{caps.cell_h} px",
         f"TERM={env.get('TERM', '')}  TERM_PROGRAM={env.get('TERM_PROGRAM', '')}",
