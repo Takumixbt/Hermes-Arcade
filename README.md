@@ -12,6 +12,8 @@ Three games inside the terminal Hermes already runs in:
 
 ![Hermes Arcade: chess, kart and the dino](docs/arcade.gif)
 
+[45-second demo, sound on](docs/demo-45s.mp4)
+
 `/console` opens the arcade. `Ctrl+O` opens it any time, even while the agent is
 working. `Esc` returns to Hermes exactly where you left it.
 
