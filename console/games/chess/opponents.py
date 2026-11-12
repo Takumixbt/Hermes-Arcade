@@ -342,8 +342,9 @@ class ModelOpponent(_RemoteOpponent):
         return result.text or ""
 
     def _gave_up(self, exc: Exception) -> str:
+        detail = str(exc).strip()
         hint = " (to pick a model, allow it under plugins.entries.hermes-arcade-tui.llm in config.yaml)" if "Trust" in type(exc).__name__ else ""
-        return f"Model unavailable ({type(exc).__name__}){hint}; the engine moved instead."
+        return f"Model unavailable ({detail or type(exc).__name__}){hint}; the engine moved instead."
 
 
 # -- coding agents already installed on this machine --------------------------------------------

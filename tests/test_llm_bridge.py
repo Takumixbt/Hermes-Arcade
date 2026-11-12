@@ -105,6 +105,20 @@ def test_the_menu_lists_the_model_when_the_bridge_is_configured(monkeypatch):
     assert opponents.available() == [("engine", "Built-in engine"), ("model", "Hermes model")]
 
 
+def test_a_bridge_failure_reports_the_host_error(monkeypatch):
+    _llm, env = _round_trip()
+    bridge.stop()  # the URL stays in the environment; the listener is gone
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(opponents, "_LLM", None)
+
+    opponent = opponents.ModelOpponent()
+    move, note = opponent.choose(Board(), [])
+
+    assert move is not None
+    assert "Console LLM bridge unavailable" in note
+
+
 def test_without_a_bridge_or_a_handle_the_model_is_not_offered(monkeypatch):
     monkeypatch.setattr(opponents, "_LLM", None)
     monkeypatch.delenv(bridge.URL_ENV, raising=False)
