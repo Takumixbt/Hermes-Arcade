@@ -8,26 +8,24 @@ from pathlib import Path
 import pytest
 
 from console import hermes_plugin as plugin
+from console import state as console_state
 from console.state import ACTIVITY
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class FakeCtx:
-    def __init__(self):
+    def __init__(self, data_dir=None):
         self.commands = {}
         self.hooks = {}
+        if data_dir is not None:
+            self.state = types.SimpleNamespace(data_dir=data_dir)
 
     def register_command(self, name, handler, description="", args_hint=""):
         self.commands[name] = (handler, description, args_hint)
 
     def register_hook(self, name, fn):
         self.hooks[name] = fn
-
-
-@pytest.fixture(autouse=True)
-def _no_hotkey_thread(monkeypatch):
-    monkeypatch.setattr(plugin, "_hotkey_watcher", lambda: None)
 
 
 def test_register_adds_command_and_hooks():
@@ -62,8 +60,36 @@ def test_register_refuses_a_hermes_without_slash_commands():
 
 def test_help_and_unknown_game():
     text = plugin.handle_console("help")
-    assert "dino" in text and "Ctrl+O" in text
+    assert "dino" in text and "Esc returns" in text and "Hotkey" not in text
     assert "Unknown game" in plugin.handle_console("pong")
+
+
+def test_the_plugin_points_scores_at_its_own_data_dir(tmp_path):
+    data_dir = tmp_path / "plugin-data"
+    try:
+        plugin.register(FakeCtx(data_dir=data_dir))
+        assert console_state.home_dir() == data_dir
+    finally:
+        console_state.set_home(None)
+
+
+def test_the_spawned_window_is_a_hermes_child_without_secrets(monkeypatch):
+    seen = {}
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-secret")
+    monkeypatch.setattr("shutil.which", lambda _name: r"C:\fake\wt.exe")
+
+    def fake_popen(argv, **kwargs):
+        seen["argv"], seen["env"] = argv, kwargs.get("env")
+        return object()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+
+    assert "opening" in plugin._spawn_window("chess")
+    env = seen["env"]
+    assert env["CONSOLE_HOST"] == "hermes"
+    assert "ANTHROPIC_API_KEY" not in env and "OPENAI_API_KEY" not in env
+    assert env["CONSOLE_HOME"] == str(console_state.home_dir())
 
 
 def test_gateway_opens_a_window(monkeypatch):

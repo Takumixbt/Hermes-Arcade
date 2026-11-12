@@ -19,6 +19,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from ...procenv import child_env
+
 PROMPT = '''You are writing the controller for a kart in a side-view race game.
 
 The engine calls your function 60 times per second. The race is 1500 metres.
@@ -115,9 +117,12 @@ def run_policy(source: str, seconds: float = 90.0, seed: int = 7,
     with tempfile.TemporaryDirectory(prefix="kart-policy-") as tmp:
         path = Path(tmp) / "run_policy.py"
         path.write_text(runner, encoding="utf-8")
-        env = dict(os.environ)
+        # The controller is model-written code. Give it Python and the terminal,
+        # not the agent's provider keys: a child that does not receive a secret
+        # cannot leak or use one.
+        env = child_env(PYTHONIOENCODING="utf-8")
         env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
-        env["PYTHONIOENCODING"] = "utf-8"
+
         try:
             proc = subprocess.run(
                 [sys.executable, str(path)],

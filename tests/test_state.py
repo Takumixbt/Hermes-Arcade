@@ -22,6 +22,18 @@ def test_corrupt_state_file_is_ignored(tmp_path, monkeypatch):
     assert state.load_high_score("dino") == 7
 
 
+def test_set_home_moves_the_state_into_the_plugin_data_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes-home"))
+    data_dir = tmp_path / "plugin-data"
+    try:
+        state.set_home(data_dir)
+        assert state.home_dir() == data_dir
+        state.save_high_score("dino", 9)
+        assert json.loads((data_dir / "console.json").read_text())["high_scores"]["dino"] == 9
+    finally:
+        state.set_home(None)
+
+
 def test_hermes_activity_flags():
     a = state.HermesActivity()
     assert a.snapshot() == (False, False)

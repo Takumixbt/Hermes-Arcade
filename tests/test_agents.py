@@ -134,6 +134,19 @@ def test_hermes_only_sees_hermes_when_opened_from_hermes(monkeypatch):
     assert opponents.available() == [("engine", "Built-in engine"), ("model", "Hermes model")]
 
 
+def test_console_host_env_pins_the_host_for_a_spawned_window(monkeypatch):
+    try:
+        monkeypatch.setenv("CONSOLE_HOST", "hermes")
+        opponents.set_host_from_env()
+        assert opponents.HOST == "hermes"
+
+        monkeypatch.setenv("CONSOLE_HOST", "not-a-host")
+        opponents.set_host_from_env()
+        assert opponents.HOST is None
+    finally:
+        opponents.set_host(None)
+
+
 def test_ansi_and_chatter_are_ignored_when_parsing():
     move = opponents._extract(Board(), "\x1b[1mThe move is: **Nf3**\x1b[0m")
     assert move is not None and Board().san(move) == "Nf3"

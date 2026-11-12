@@ -14,8 +14,7 @@ Three games inside the terminal Hermes already runs in:
 
 [45-second demo, sound on](docs/demo-45s.mp4)
 
-`/console` opens the arcade. `Ctrl+O` opens it any time, even while the agent is
-working. `Esc` returns to Hermes exactly where you left it.
+`/console` opens the arcade. `Esc` returns to Hermes exactly where you left it.
 
 ## Install
 
@@ -28,10 +27,10 @@ Restart Hermes. `/help` lists `/console` and `/race`.
 From a checkout, a directory junction is enough on Windows (no admin rights):
 
 ```powershell
-$dst = "$env:LOCALAPPDATA\hermes\plugins\hermes-arcade"
+$dst = "$env:LOCALAPPDATA\hermes\plugins\hermes-arcade-tui"
 New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
 cmd /c mklink /J "$dst" "C:\path\to\Hermes-Arcade"
-hermes plugins enable hermes-arcade
+hermes plugins enable hermes-arcade-tui
 ```
 
 ## Play
@@ -94,7 +93,7 @@ console/games/chess/    rules, engine, Stockfish and model opponents
 console/games/kart/     physics, rendering, headless policy benchmark
 console/games/dino/     Chrome's trex port and the Hermes sprite sheet
 console/gfx/            sixel encoder, PNG codec, canvas
-console/hermes_plugin.py  /console, /race, the Ctrl+O hotkey
+console/hermes_plugin.py  /console, /race
 ```
 
 ## Credits

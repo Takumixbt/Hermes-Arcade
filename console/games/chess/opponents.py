@@ -63,6 +63,15 @@ def host_name() -> str:
     return _HOST_NAMES.get(HOST or "", "")
 
 
+def set_host_from_env() -> None:
+    """Honour ``CONSOLE_HOST`` for launchers that cannot pass ``--host``."""
+    set_host(os.environ.get("CONSOLE_HOST"))
+
+
+#: The plugin's spawned window pins Hermes this way.
+set_host_from_env()
+
+
 # -- the models Hermes has -------------------------------------------------------------------
 
 
@@ -316,7 +325,7 @@ class ModelOpponent(_RemoteOpponent):
         return result.text or ""
 
     def _gave_up(self, exc: Exception) -> str:
-        hint = " (to pick a model, allow it under plugins.entries.hermes-arcade.llm in config.yaml)" if "Trust" in type(exc).__name__ else ""
+        hint = " (to pick a model, allow it under plugins.entries.hermes-arcade-tui.llm in config.yaml)" if "Trust" in type(exc).__name__ else ""
         return f"Model unavailable ({type(exc).__name__}){hint}; the engine moved instead."
 
 
@@ -615,6 +624,7 @@ __all__ = [
     "load_catalog",
     "make",
     "set_host",
+    "set_host_from_env",
     "set_llm",
     "llm_available",
     "uci",

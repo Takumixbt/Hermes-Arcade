@@ -1,8 +1,8 @@
 """What Console remembers: high scores on disk, the agent's activity in memory.
 
-High scores live in ``console.json``. If Hermes is installed, that is Hermes'
-home directory, so the plugin and a standalone game share one score file;
-otherwise it is Console's own config directory. ``CONSOLE_HOME`` overrides both.
+High scores live in ``console.json``. The Hermes plugin points this at its own
+``plugin-data`` directory, so plugin state stays out of the Hermes home root; a
+standalone game keeps Console's config directory. ``CONSOLE_HOME`` overrides both.
 The activity flag is just a process-wide object: the plugin hooks and the game
 run in the same process, so no state file is needed to connect them.
 """
@@ -15,8 +15,20 @@ import sys
 import threading
 from pathlib import Path
 
+#: Set by the Hermes plugin to its own ``plugin-data`` directory. The standalone
+#: game leaves it unset and keeps using the config directory it always has.
+_OVERRIDE: Path | None = None
+
+
+def set_home(path) -> None:
+    """Point Console at one directory for its JSON files. ``None`` restores discovery."""
+    global _OVERRIDE
+    _OVERRIDE = Path(path) if path else None
+
 
 def home_dir() -> Path:
+    if _OVERRIDE is not None:
+        return _OVERRIDE
     env = os.environ.get("CONSOLE_HOME")
     if env:
         return Path(env)

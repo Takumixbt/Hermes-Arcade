@@ -1,8 +1,8 @@
 # Hermes Arcade: Hermes plugin manifest
-# Product name: Hermes Arcade; plugin key / enable slug: hermes-arcade
-name: hermes-arcade
-version: 3.0.1
-description: "Hermes Arcade: chess against the model Hermes is running, a side-view kart racer, and Chrome's dino wearing the Hermes cap. /console opens it, Ctrl+O any time."
+# Product name: Hermes Arcade; plugin key / enable slug: hermes-arcade-tui
+name: hermes-arcade-tui
+version: 3.0.2
+description: "Hermes Arcade: chess against the model Hermes is running, a side-view kart racer, and Chrome's dino wearing the Hermes cap. /console opens it."
 author: Takumi
 kind: standalone
 requires_hermes: ">=0.23.0"

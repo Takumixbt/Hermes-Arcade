@@ -1,17 +1,15 @@
-"""Hermes Agent plugin: ``/console`` and an any-time hotkey.
+"""Hermes Agent plugin: ``/console`` and ``/race``.
 
-``/console [game]`` opens chess (or the dino) inside the terminal Hermes is
-running in. Hermes is the one host that can hand the terminal over in place:
-Hermes runs plugin slash commands on a worker thread while prompt_toolkit owns
-the screen and the keyboard on the main thread, so the game is started through
-prompt_toolkit's own ``run_in_terminal``: it pauses Hermes' UI, hands over the
-terminal, and repaints Hermes afterwards.
+``/console [game]`` opens chess, the kart racer or the dino inside the terminal
+Hermes is running in. Hermes is the one host that can hand the terminal over in
+place: Hermes runs plugin slash commands on a worker thread while prompt_toolkit
+owns the screen and the keyboard on the main thread, so the game is started
+through prompt_toolkit's own ``run_in_terminal``: it pauses Hermes' UI, hands over
+the terminal, and repaints Hermes afterwards.
 
-Hermes only dispatches a slash command once the agent is idle, so while it is
-busy ``/console`` would wait in the queue. The hotkey (Ctrl+O by default, set
-``CONSOLE_HOTKEY`` to change it) is bound straight into prompt_toolkit and opens
-the game immediately, even in the middle of a long run. While you play, agent
-output is held back and shown when you leave.
+When Hermes has no prompt_toolkit terminal to draw on (the TUI, the gateway), the
+game opens in its own window instead, as a child process with a minimal
+environment. While you play, agent output is held back and shown when you leave.
 """
 
 from __future__ import annotations
@@ -20,10 +18,10 @@ import asyncio
 import os
 import sys
 import threading
-import time
 
 from .catalog import DEFAULT_GAME
-from .state import ACTIVITY
+from .procenv import child_env
+from .state import ACTIVITY, home_dir, set_home
 
 CLI_ONLY = (
     "Console draws in the terminal, so it only works in Hermes' command line. "
@@ -31,19 +29,10 @@ CLI_ONLY = (
 )
 HELP = (
     "Console games: {games}. Usage: /console [game|probe]  (default: {default}). "
-    "Hotkey: {hotkey} opens it any time, even while Hermes is working. Esc returns to Hermes."
+    "Esc returns to Hermes."
 )
-DEFAULT_HOTKEY = "c-o"
 
 _playing = threading.Lock()
-
-
-def _hotkey() -> str:
-    return (os.environ.get("CONSOLE_HOTKEY") or DEFAULT_HOTKEY).strip().lower()
-
-
-def _pretty_key(key: str) -> str:
-    return "Ctrl+" + key[2:].upper() if key.startswith("c-") else key
 
 
 def _prompt_toolkit_app():
@@ -130,7 +119,7 @@ def _run_with_terminal_handoff(func):
     except RuntimeError:
         running = None
     if running is loop:
-        # Already on the UI thread (a key binding): schedule it and return at once.
+        # Already on the UI thread: schedule it and return at once.
         asyncio.ensure_future(_go())
         return None
     return asyncio.run_coroutine_threadsafe(_go(), loop).result()
@@ -187,7 +176,14 @@ def _spawn_window(game: str) -> str:
 
     root = Path(__file__).resolve().parents[1]
     cmd = [sys.executable, "-m", "console", game]
-    env = dict(os.environ, PYTHONPATH=str(root) + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    # A window opened from Hermes stays a Hermes window: no agent-CLI opponents
+    # and no raw API opponent. It gets the OS, Python and the terminal, never the
+    # agent's provider keys. CONSOLE_HOME keeps it reading the same score file.
+    env = child_env(
+        PYTHONPATH=str(root) + os.pathsep + os.environ.get("PYTHONPATH", ""),
+        CONSOLE_HOST="hermes",
+        CONSOLE_HOME=str(home_dir()),
+    )
     wt = shutil.which("wt") or shutil.which("wt.exe")
     if not wt:
         candidate = os.path.expanduser(r"~\AppData\Local\Microsoft\WindowsApps\wt.exe")
@@ -212,7 +208,7 @@ def handle_console(raw_args: str = "", *_args, **_kwargs) -> str:
 
     name = parse_args(raw_args)
     if name in {"help", "-h", "--help", "?"}:
-        return HELP.format(games=", ".join(sorted(GAMES)), default=DEFAULT_GAME, hotkey=_pretty_key(_hotkey()))
+        return HELP.format(games=", ".join(sorted(GAMES)), default=DEFAULT_GAME)
     if name in {"probe", "caps"}:
         if os.environ.get("HERMES_GATEWAY"):
             return CLI_ONLY
@@ -247,40 +243,6 @@ def handle_race(raw_args: str = "", *_args, **_kwargs) -> str:
     return agent.report(result)
 
 
-# -- hotkey -------------------------------------------------------------------
-
-
-def _install_hotkey(app) -> bool:
-    if getattr(app, "_console_hotkey_installed", False):
-        return True
-    kb = getattr(app, "key_bindings", None)
-    if kb is None or not hasattr(kb, "add"):
-        return False
-    key = _hotkey()
-
-    def _open(event) -> None:
-        if _playing.locked():
-            return
-        _run_with_terminal_handoff(lambda: _play_game(DEFAULT_GAME))
-
-    try:
-        kb.add(key.replace("ctrl+", "c-"), eager=True)(_open)
-    except Exception:
-        return False
-    app._console_hotkey_installed = True
-    return True
-
-
-def _hotkey_watcher() -> None:
-    """Hermes builds its prompt_toolkit app after plugins load; bind once it exists."""
-    deadline = time.monotonic() + 300
-    while time.monotonic() < deadline:
-        app = _prompt_toolkit_app()
-        if app is not None and _install_hotkey(app):
-            return
-        time.sleep(0.5)
-
-
 # -- Hermes activity hooks ------------------------------------------------------
 
 
@@ -309,6 +271,10 @@ def register(ctx) -> None:
         kart_agent.set_llm(ctx.llm)  # and lets /race ask a model for a controller
     except Exception:
         pass  # an older Hermes without ctx.llm: chess still works against the engine
+    try:
+        set_home(ctx.state.data_dir)  # scores and the model cache live with the plugin
+    except Exception:
+        pass  # no ctx.state (tests, older Hermes): keep the standalone location
     ACTIVITY.host = "Hermes"
     description = "Hermes Arcade: chess, kart and the dino in this terminal. Esc returns."
     try:
@@ -333,4 +299,3 @@ def register(ctx) -> None:
             ctx.register_hook(hook, fn)
         except Exception:
             pass  # an older Hermes without this hook only loses the status line
-    threading.Thread(target=_hotkey_watcher, name="console-hotkey", daemon=True).start()
