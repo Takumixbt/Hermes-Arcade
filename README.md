@@ -2,8 +2,9 @@
 
 Three games inside the terminal Hermes already runs in:
 
-- **Chess** against the model Hermes is running, the built-in engine, Stockfish,
-  or an installed agent CLI (Claude Code, Codex, OpenCode).
+- **Chess** against the model Hermes is running, the built-in engine, or
+  Stockfish. The standalone `console` CLI can also use an installed agent CLI
+  (Claude Code, Codex, OpenCode).
 - **Kart**, a side-view racer with three rivals, boost pads, oil slicks, coins,
   slipstream, a drift charge, checkpoint gates and three times of day. Race it
   yourself, or let a model write the controller and score it.
@@ -74,10 +75,16 @@ The opponent menu lists what this machine actually has:
 - **Agent CLIs** found on `PATH` (`claude -p`, `codex exec`, `opencode run`),
   using the login already on the machine
 
+Inside the Hermes window the menu stays on the Hermes model, the engine and
+Stockfish. The standalone `console` CLI also lists the agent CLIs and an API
+endpoint.
+
 ## What it touches
 
-- No network calls of its own. Chess model opponents and `/race` call the
-  provider you configured, through Hermes.
+- While hosted in Hermes, model calls go through `ctx.llm`. A spawned game
+  window reaches it over a loopback-only bridge (random port, bearer token) and
+  receives no provider key. `/race`'s model-written controller gets neither
+  the bridge token nor a key.
 - Model-written kart controllers execute as Python in a child process. That is
   arbitrary code by design; run `/race` only with models you would let run code.
 - Games draw with sixel graphics when the terminal supports it (Windows Terminal

@@ -47,6 +47,8 @@ def test_run_policy_does_not_hand_the_model_written_controller_our_keys(monkeypa
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-secret")
+    monkeypatch.setenv("CONSOLE_LLM_BRIDGE_URL", "http://127.0.0.1:1234")
+    monkeypatch.setenv("CONSOLE_LLM_BRIDGE_TOKEN", "x" * 32)
     monkeypatch.setattr(agent.subprocess, "run", fake_run)
 
     result = agent.run_policy("def act(state):\n    return {'lane': 1, 'throttle': 1.0}\n")
@@ -54,5 +56,7 @@ def test_run_policy_does_not_hand_the_model_written_controller_our_keys(monkeypa
     assert result == {"finished": False}
     assert "ANTHROPIC_API_KEY" not in seen["env"]
     assert "OPENAI_API_KEY" not in seen["env"]
+    assert "CONSOLE_LLM_BRIDGE_URL" not in seen["env"]
+    assert "CONSOLE_LLM_BRIDGE_TOKEN" not in seen["env"]
     assert seen["env"]["PYTHONIOENCODING"] == "utf-8"
     assert str(agent._repo_root()) in seen["env"]["PYTHONPATH"]

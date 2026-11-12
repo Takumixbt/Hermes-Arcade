@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 from . import engine
 from .rules import Board, uci
+from ...llm_bridge import complete as bridge_complete, config_from_env as bridge_config
 
 # The Hermes plugin hands over ``ctx.llm`` here when it loads. Other hosts have none.
 _LLM = None
@@ -37,7 +38,7 @@ def set_llm(llm) -> None:
 
 
 def llm_available() -> bool:
-    return _LLM is not None
+    return _LLM is not None or bridge_config() is not None
 
 
 # -- which host opened the game ----------------------------------------------------------------
@@ -302,20 +303,36 @@ class _RemoteOpponent(Opponent):
 
 
 class ModelOpponent(_RemoteOpponent):
-    """Asks the model Hermes is running, through ``ctx.llm``."""
+    """Asks the model Hermes is running, through ``ctx.llm`` or the loopback bridge."""
 
     def __init__(self, fallback_level: int = 2, provider: str = "", model: str = "") -> None:
         super().__init__(fallback_level)
-        if _LLM is None:
+        if not llm_available():
             raise RuntimeError("no Hermes model available (open Console from Hermes)")
         self.provider = provider
         self.model = model
         self.label = f"Hermes model ({model})" if model else "Hermes model"
 
     def _ask(self, messages) -> str:
-        kwargs = {"max_tokens": 600, "timeout": 120, "purpose": "console chess move"}
         model = self.model or os.environ.get("CONSOLE_CHESS_MODEL")
         provider = self.provider or os.environ.get("CONSOLE_CHESS_PROVIDER")
+        bridge = bridge_config()
+        if bridge is not None:
+            result = bridge_complete(
+                *bridge,
+                messages,
+                provider=provider or None,
+                model=model or None,
+                max_tokens=600,
+                timeout=120,
+                purpose="console chess move",
+            )
+            used = result.get("model") or model or ""
+            self.label = f"Hermes model ({used})" if used else "Hermes model"
+            return result.get("text") or ""
+        if _LLM is None:
+            raise RuntimeError("no Hermes model available (open Console from Hermes)")
+        kwargs = {"max_tokens": 600, "timeout": 120, "purpose": "console chess move"}
         if model:
             kwargs["model"] = model
         if provider:

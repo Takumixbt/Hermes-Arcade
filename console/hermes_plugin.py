@@ -20,6 +20,7 @@ import sys
 import threading
 
 from .catalog import DEFAULT_GAME
+from .llm_bridge import start as start_llm_bridge
 from .procenv import child_env
 from .state import ACTIVITY, home_dir, set_home
 
@@ -33,6 +34,8 @@ HELP = (
 )
 
 _playing = threading.Lock()
+#: Loopback URL and token for the spawned window, set once in ``register``.
+_LLM_BRIDGE: dict[str, str] = {}
 
 
 def _prompt_toolkit_app():
@@ -177,12 +180,13 @@ def _spawn_window(game: str) -> str:
     root = Path(__file__).resolve().parents[1]
     cmd = [sys.executable, "-m", "console", game]
     # A window opened from Hermes stays a Hermes window: no agent-CLI opponents
-    # and no raw API opponent. It gets the OS, Python and the terminal, never the
-    # agent's provider keys. CONSOLE_HOME keeps it reading the same score file.
+    # and no raw API opponent. It gets the OS, Python, the terminal, the plugin's
+    # score path, and a loopback bridge to the model. Never the agent's keys.
     env = child_env(
         PYTHONPATH=str(root) + os.pathsep + os.environ.get("PYTHONPATH", ""),
         CONSOLE_HOST="hermes",
         CONSOLE_HOME=str(home_dir()),
+        **_LLM_BRIDGE,
     )
     wt = shutil.which("wt") or shutil.which("wt.exe")
     if not wt:
@@ -271,6 +275,11 @@ def register(ctx) -> None:
         kart_agent.set_llm(ctx.llm)  # and lets /race ask a model for a controller
     except Exception:
         pass  # an older Hermes without ctx.llm: chess still works against the engine
+    try:
+        _LLM_BRIDGE.clear()
+        _LLM_BRIDGE.update(start_llm_bridge(getattr(ctx, "llm", None)) or {})
+    except Exception:
+        _LLM_BRIDGE.clear()  # no bridge: the window offers the engine and says why
     try:
         set_home(ctx.state.data_dir)  # scores and the model cache live with the plugin
     except Exception:

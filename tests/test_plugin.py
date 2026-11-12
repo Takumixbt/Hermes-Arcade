@@ -73,6 +73,43 @@ def test_the_plugin_points_scores_at_its_own_data_dir(tmp_path):
         console_state.set_home(None)
 
 
+def test_register_starts_the_model_bridge(monkeypatch):
+    bridge_env = {
+        "CONSOLE_LLM_BRIDGE_URL": "http://127.0.0.1:1",
+        "CONSOLE_LLM_BRIDGE_TOKEN": "x" * 32,
+    }
+    monkeypatch.setattr(plugin, "start_llm_bridge", lambda _llm: bridge_env)
+    try:
+        plugin.register(FakeCtx())
+        assert plugin._LLM_BRIDGE == bridge_env
+    finally:
+        plugin._LLM_BRIDGE.clear()
+
+
+def test_the_spawned_window_gets_the_model_bridge(monkeypatch):
+    seen = {}
+    monkeypatch.setattr("shutil.which", lambda _name: r"C:\fake\wt.exe")
+
+    def fake_popen(argv, **kwargs):
+        seen["env"] = kwargs.get("env")
+        return object()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    bridge_env = {
+        "CONSOLE_LLM_BRIDGE_URL": "http://127.0.0.1:1",
+        "CONSOLE_LLM_BRIDGE_TOKEN": "x" * 32,
+    }
+    try:
+        plugin._LLM_BRIDGE.update(bridge_env)
+        plugin._spawn_window("chess")
+    finally:
+        plugin._LLM_BRIDGE.clear()
+
+    assert seen["env"]["CONSOLE_HOST"] == "hermes"
+    assert seen["env"]["CONSOLE_LLM_BRIDGE_URL"] == bridge_env["CONSOLE_LLM_BRIDGE_URL"]
+    assert seen["env"]["CONSOLE_LLM_BRIDGE_TOKEN"] == bridge_env["CONSOLE_LLM_BRIDGE_TOKEN"]
+
+
 def test_the_spawned_window_is_a_hermes_child_without_secrets(monkeypatch):
     seen = {}
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
